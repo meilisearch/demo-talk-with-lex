@@ -1,0 +1,56 @@
+name: talk-with-lex
+
+services:
+  meilisearch:
+    image: getmeili/meilisearch:v1.54.0
+    ports:
+      - "7710:7700"
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-talk-with-lex-master-key-change-me}
+      MEILI_ENV: development
+      MEILI_NO_ANALYTICS: "true"
+      # ~100k transcript chunks: allow bigger payloads and let indexing use more RAM.
+      MEILI_HTTP_PAYLOAD_SIZE_LIMIT: 200MB
+    volumes:
+      - meili_data:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7700/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3110:3000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      WATCHPACK_POLLING: "true"
+      MEILI_HOST: http://meilisearch:7700
+      MEILI_PUBLIC_URL: ${MEILI_PUBLIC_URL:-http://localhost:7710}
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-talk-with-lex-master-key-change-me}
+    depends_on:
+      meilisearch:
+        condition: service_healthy
+    develop:
+      watch:
+        - action: sync
+          path: ./web/src
+          target: /app/src
+        - action: sync
+          path: ./web/public
+          target: /app/public
+        - action: rebuild
+          path: ./web/package.json
+        - action: rebuild
+          path: ./web/pnpm-lock.yaml
+        - action: sync+restart
+          path: ./.env
+          target: /app/.env
+
+volumes:
+  meili_data:

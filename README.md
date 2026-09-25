@@ -1,0 +1,80 @@
+# Talk with Lex — the Lex Fridman Podcast on Meilisearch
+
+Demo: every Lex Fridman Podcast transcript cut into one-minute passages. Find *where* someone said
+something (and jump to that second on YouTube), or chat with the whole show, or with one episode.
+
+**Data:** 414 episodes · 97,512 chunks · 9.9M words
+
+| Source | Episodes | Speakers | Chapters |
+|---|---|---|---|
+| Official transcripts on [lexfridman.com](https://lexfridman.com/podcast/) | 71 (mostly #387–#502) | ✅ | ✅ |
+| [Whispering-GPT/lex-fridman-podcast](https://huggingface.co/datasets/Whispering-GPT/lex-fridman-podcast) (Whisper) | 343 (#1–#345) | — | ✅ from the YouTube outline |
+
+Episodes #346–#386 (roughly) are missing: neither source covers them.
+
+| Feature | Meilisearch capability |
+|---|---|
+| `"love is the answer"` finds the exact moments | **Phrase search**, highlighting + cropping |
+| Keyword ↔ semantic slider ("fear of death" finds "afraid to die") | **Hybrid search** with a local **HuggingFace embedder** (`BAAI/bge-small-en-v1.5`) or OpenAI |
+| "Who said it: Lex / Guests" | **Filter** on `isLex`, counts from **facets** |
+| Guest list with type-ahead | **Facets** + **facet search** |
+| "Episodes with …" chips above the results | **Multi-search** (`chunks` + `episodes` in one request) |
+| Newest / oldest | **Sort** on `episodeNumber` |
+| "Context" under a hit | Filter `episodeId = … AND position X TO Y` + sort |
+| Chat page with a timestamped link for every claim | **`/chats` conversational search** (LLM calls a hybrid-search tool, streams progress + sources) |
+| Chat with a single episode | **Tenant token** with a search rule `episodeId = …` |
+
+## Run it
+
+Requires Docker (OrbStack) and Node 24.
+
+```bash
+cp .env.example .env              # add CHAT_API_KEY for the chat page
+docker compose up -d meilisearch
+cd web && pnpm install
+pnpm data:fetch                    # lexfridman.com + HuggingFace -> data/*.json(l) (~2 min, cached in data/raw)
+pnpm data:setup                    # settings, import (~20 s), chat workspace, then embeddings in the background
+cd .. && docker compose watch      # web app with live sync
+```
+
+- App: http://localhost:3110 (or `http://web.talk-with-lex.orb.local:3000`)
+- Meilisearch: http://localhost:7710 (or `http://meilisearch.talk-with-lex.orb.local:7700`), master key in `.env`
+
+Keyword search works as soon as the import finishes. Semantic search and hybrid chat turn on when
+the embedding task is done. With the local HuggingFace model that takes about 80 min on CPU for ~100k chunks.
+For a faster setup, set `EMBEDDER_SOURCE=openAi` and `EMBEDDER_API_KEY` (text-embedding-3-small, ~13M tokens ≈ $0.30).
+
+### Chat LLM
+
+The `/chats` workspace needs an LLM provider. Set these in `.env`, then re-run `pnpm data:setup`:
+
+```
+CHAT_SOURCE=openAi        # openAi | mistral | gemini | azureOpenAi | vLlm
+CHAT_API_KEY=sk-...
+CHAT_MODEL=gpt-4o-mini
+CHAT_BASE_URL=            # required for mistral (https://api.mistral.ai/v1) and vLlm
+```
+
+Re-running setup re-sends the documents and settings. Meilisearch only re-embeds a document when its
+rendered embedder template changes, so a second run should not redo the whole embedding pass.
+
+## Demo script
+
+1. `"love is the answer"` → 7 exact moments across episodes; press ▶ to play the exact second.
+2. `meaning of life` + **Who said it: Lex** → only Lex's own questions (recent episodes).
+3. Type `Dostoyevski` (typo) → still finds Dostoevsky.
+4. Slide to semantic, search `afraid to die` → passages about death and mortality that never use those words.
+5. Open **Context** under a hit, then **Chat with this episode** → "Summarize this conversation in 5 bullet points".
+6. Chat page, all episodes: "What does Lex think love is?" → answer with clickable timestamp citations.
+
+## Layout
+
+```
+compose.yaml                        meilisearch + web (Next.js dev server, compose watch)
+data/                               generated dataset (git-ignored); data/raw caches downloads
+web/scripts/fetch-transcripts.ts    scrape + parse + chunk (≈110–190 words, never mixing speakers)
+web/scripts/setup-meilisearch.ts    all Meilisearch configuration lives here
+web/src/app/api/*                   search (multi-search), context, facet-search, episodes/[id], status,
+                                    chat-token (tenant token; the browser calls /chats directly)
+web/src/app/                        UI: search page, floating YouTube player, chat page
+```

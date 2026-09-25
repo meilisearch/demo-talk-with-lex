@@ -1,0 +1,8 @@
+.env
+data/*.json
+data/*.ndjson
+data/raw
+node_modules
+.next
+*.tsbuildinfo
+next-env.d.ts
