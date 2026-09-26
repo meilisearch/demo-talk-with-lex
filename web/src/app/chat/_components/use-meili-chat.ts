@@ -87,11 +87,14 @@ export function useMeiliChat(episodeId: string | undefined) {
             return false;
           }
           if (call.name === "_meiliSearchProgress") {
-            const params = JSON.parse(String(args.function_parameters ?? "{}")) as { q?: string; filter?: string };
+            // Meilisearch 1.54 sends `function_arguments`; older docs call it `function_parameters`.
+            const raw = args.function_arguments ?? args.function_parameters ?? "{}";
+            const params = JSON.parse(String(raw)) as { q?: string; filter?: string };
             const step: ChatSearchStep = { callId: String(args.call_id), q: params.q ?? "", filter: params.filter };
             patchLast((t) => ({ ...t, searches: [...t.searches, step] }));
           } else if (call.name === "_meiliSearchSources") {
-            const docs = (args.documents ?? []) as ChatSource[];
+            // Same story: `sources` in 1.54, `documents` in older docs.
+            const docs = (args.sources ?? args.documents ?? []) as ChatSource[];
             patchLast((t) => {
               const seen = new Set(t.sources.map((s) => s.id));
               return { ...t, sources: [...t.sources, ...docs.filter((d) => d.id && !seen.has(d.id))] };
