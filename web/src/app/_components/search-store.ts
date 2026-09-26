@@ -10,6 +10,8 @@ interface SearchState extends SearchRequest {
   setPage: (p: number) => void;
   setSpeaker: (s: SpeakerFilter) => void;
   toggleGuest: (guest: string) => void;
+  setEpisode: (episodeId?: string) => void;
+  setDistinct: (distinct: boolean) => void;
   clearFilters: () => void;
 }
 
@@ -20,6 +22,8 @@ export const useSearch = create<SearchState>()((set) => ({
   sort: "relevance",
   speaker: "all",
   guests: [],
+  episodeId: undefined,
+  distinct: false,
   setQ: (q) => set({ q, page: 1 }),
   setSemanticRatio: (semanticRatio) => set({ semanticRatio, page: 1 }),
   setSort: (sort) => set({ sort, page: 1 }),
@@ -30,5 +34,8 @@ export const useSearch = create<SearchState>()((set) => ({
       guests: s.guests.includes(guest) ? s.guests.filter((g) => g !== guest) : [...s.guests, guest],
       page: 1,
     })),
-  clearFilters: () => set({ speaker: "all", guests: [], page: 1 }),
+  // Opening one episode shows all its moments, so grouping by episode no longer makes sense.
+  setEpisode: (episodeId) => set((s) => ({ episodeId, distinct: episodeId ? false : s.distinct, page: 1 })),
+  setDistinct: (distinct) => set({ distinct, page: 1 }),
+  clearFilters: () => set({ speaker: "all", guests: [], episodeId: undefined, page: 1 }),
 }));

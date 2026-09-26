@@ -50,6 +50,8 @@ export interface SearchRequest {
   speaker: SpeakerFilter;
   guests: string[];
   episodeId?: string;
+  /** One result per episode (Meilisearch `distinct` on `episodeId`). */
+  distinct: boolean;
 }
 
 export interface SearchResponse {
@@ -61,6 +63,8 @@ export interface SearchResponse {
   facetDistribution: Record<string, Record<string, number>>;
   semanticHitCount?: number;
   episodes: Episode[];
+  /** Matching passages per episode, so a grouped result can say how many more moments it hides. */
+  momentsPerEpisode?: Record<string, number>;
 }
 
 export const formatTimestamp = (sec: number) => {

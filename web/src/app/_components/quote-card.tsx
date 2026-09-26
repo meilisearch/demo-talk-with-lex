@@ -44,7 +44,18 @@ function Context({ hit }: { hit: ChunkHit }) {
   );
 }
 
-export function QuoteCard({ hit, onGuest }: { hit: ChunkHit; onGuest: (guest: string) => void }) {
+export function QuoteCard({
+  hit,
+  onGuest,
+  moreMoments = 0,
+  onEpisode,
+}: {
+  hit: ChunkHit;
+  onGuest: (guest: string) => void;
+  /** When results are grouped by episode: how many other matching moments this episode has. */
+  moreMoments?: number;
+  onEpisode?: (episodeId: string) => void;
+}) {
   const play = usePlayer((s) => s.play);
   const [open, setOpen] = useState(false);
   const label = `${hit.timestamp} · ${hit.speaker ?? hit.guest}`;
@@ -86,6 +97,11 @@ export function QuoteCard({ hit, onGuest }: { hit: ChunkHit; onGuest: (guest: st
         <span className="min-w-0 flex-1 truncate" title={hit.episodeTitle}>
           {hit.episodeTitle}
         </span>
+        {moreMoments > 0 && onEpisode && (
+          <button onClick={() => onEpisode(hit.episodeId)} className="flex items-center gap-1 font-medium text-[var(--brand)] hover:underline">
+            +{moreMoments} more {moreMoments === 1 ? "moment" : "moments"} in this episode
+          </button>
+        )}
         <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1 hover:text-foreground">
           <ChevronDown className={cn("size-3.5 transition-transform", open && "rotate-180")} />
           Context

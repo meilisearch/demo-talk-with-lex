@@ -3,11 +3,15 @@
 //
 //   node scripts/setup-meilisearch.ts            # embeddings keep computing in the background
 //   node scripts/setup-meilisearch.ts --wait     # wait until every chunk is embedded
+//
+// If ../data/chunks-with-vectors.ndjson exists (see export-vectors.ts), documents are imported
+// with their precomputed embeddings and the target instance never re-embeds anything.
 import { Meilisearch } from "meilisearch";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
+import { gzipSync } from "node:zlib";
 import type { Chunk, Episode } from "../src/lib/types.ts";
 import { loadEnv } from "./env.ts";
 
@@ -18,11 +22,26 @@ const apiKey = process.env.MEILI_MASTER_KEY ?? "talk-with-lex-master-key-change-
 const client = new Meilisearch({ host, apiKey });
 const DATA = path.resolve(import.meta.dirname, "../../data");
 
-const CHUNKS = "chunks";
-const EPISODES = "episodes";
+const CHUNKS = process.env.MEILI_CHUNKS_INDEX ?? "chunks";
+const EPISODES = process.env.MEILI_EPISODES_INDEX ?? "episodes";
 const EMBEDDER = "default";
-const WORKSPACE = "lex";
-const BATCH = 10_000;
+const WORKSPACE = process.env.CHAT_WORKSPACE ?? "lex";
+const BATCH_PLAIN = 10_000;
+const VECTORS_FILE = path.join(DATA, "chunks-with-vectors.ndjson");
+const withVectors = existsSync(VECTORS_FILE);
+// Documents with 384-float vectors are ~9x bigger: smaller batches, gzipped, stay under the payload limit.
+const BATCH = withVectors ? 5_000 : BATCH_PLAIN;
+
+async function addBatch(docs: Chunk[]): Promise<number> {
+  if (!withVectors) return (await client.index<Chunk>(CHUNKS).addDocuments(docs)).taskUid;
+  const body = gzipSync(docs.map((d) => JSON.stringify(d)).join("\n"));
+  const task = (await meili(`/indexes/${CHUNKS}/documents?primaryKey=id`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-ndjson", "Content-Encoding": "gzip" },
+    body,
+  })) as { taskUid: number };
+  return task.taskUid;
+}
 
 async function meili(pathname: string, init: RequestInit = {}) {
   const res = await fetch(`${host}${pathname}`, {
@@ -101,27 +120,39 @@ async function main() {
       searchParameters: { limit: 12 },
     },
   };
+  const hybridChat = {
+    ...baseSettings.chat,
+    searchParameters: { limit: 12, hybrid: { embedder: EMBEDDER, semanticRatio: 0.6 } },
+  };
+  // With precomputed vectors the embedder must exist before the documents arrive (they carry
+  // `regenerate: false`), so the whole configuration goes in at once.
+  const firstSettings = withVectors
+    ? { ...baseSettings, embedders: { [EMBEDDER]: embedderSettings() }, chat: hybridChat }
+    : baseSettings;
   await waitTask(
-    (await chunks.updateSettings(baseSettings as Parameters<typeof chunks.updateSettings>[0])).taskUid,
-    "chunks settings",
+    (await chunks.updateSettings(firstSettings as Parameters<typeof chunks.updateSettings>[0])).taskUid,
+    withVectors ? "chunks settings + embedder" : "chunks settings",
   );
 
   // ---- import chunks in batches (the NDJSON file is ~90 MB) --------------
   let batch: Chunk[] = [];
   let total = 0;
   let lastTask = 0;
-  const lines = createInterface({ input: createReadStream(path.join(DATA, "chunks.ndjson")) });
+  const importFile = withVectors ? VECTORS_FILE : path.join(DATA, "chunks.ndjson");
+  console.log(`… importing ${path.basename(importFile)}`);
+  const lines = createInterface({ input: createReadStream(importFile) });
   for await (const line of lines) {
     if (!line.trim()) continue;
     batch.push(JSON.parse(line));
     if (batch.length === BATCH) {
-      lastTask = (await chunks.addDocuments(batch)).taskUid;
+      lastTask = await addBatch(batch);
       total += batch.length;
       batch = [];
+      process.stdout.write(`\r  sent ${total.toLocaleString()}`);
     }
   }
   if (batch.length) {
-    lastTask = (await chunks.addDocuments(batch)).taskUid;
+    lastTask = await addBatch(batch);
     total += batch.length;
   }
   await waitTask(lastTask, `chunks documents (${total.toLocaleString()})`);
@@ -165,7 +196,7 @@ async function main() {
             "Search query: the key words or a short paraphrase of what was said (e.g. `meaning of life`, `love is the answer`). Not a full question.",
           searchFilterParam:
             "Optional Meilisearch filter. Examples: `isLex = true` (only Lex's own words, recent episodes), `guest = \"Elon Musk\"`, `speaker = \"Elon Musk\"`, `episodeNumber >= 400`. Leave empty unless the user explicitly restricts who spoke or which episode.",
-          searchIndexUidParam: "Index to search. Always use `chunks`.",
+          searchIndexUidParam: `Index to search. Always use \`${CHUNKS}\`.`,
         },
       }),
     });
@@ -174,11 +205,16 @@ async function main() {
     console.log("! CHAT_API_KEY not set: chat workspace skipped (search still works)");
   }
 
+  if (withVectors) {
+    console.log("✓ embeddings imported from chunks-with-vectors.ndjson (no re-embedding)");
+    return;
+  }
+
   // ---- embedder last: it re-embeds every chunk, which is the long part ---
   const embedder = embedderSettings();
   const embedTask = await chunks.updateSettings({
     embedders: { [EMBEDDER]: embedder },
-    chat: { ...baseSettings.chat, searchParameters: { limit: 12, hybrid: { embedder: EMBEDDER, semanticRatio: 0.6 } } },
+    chat: hybridChat,
   } as Parameters<typeof chunks.updateSettings>[0]);
   console.log(`… embedding ${total.toLocaleString()} chunks with ${embedder.source} ${embedder.model} (task ${embedTask.taskUid})`);
   if (process.argv.includes("--wait")) {

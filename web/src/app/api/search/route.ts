@@ -24,14 +24,23 @@ export async function POST(req: Request) {
   const body = (await req.json()) as SearchRequest;
   const q = body.q.trim();
   const useHybrid = !!q && body.semanticRatio > 0 && (await semanticReady());
+  const filter = buildFilter(body);
+  const episodeQuery = q
+    ? [{ indexUid: EPISODES_INDEX, q, limit: 4, attributesToSearchOn: ["guest"], rankingScoreThreshold: 0.9 }]
+    : [];
+  // With distinct, facets are counted per episode kept: a facet-only query without distinct
+  // gives how many passages match in each episode.
+  const countQuery =
+    body.distinct && q ? [{ indexUid: CHUNKS_INDEX, q, filter, limit: 0, facets: ["episodeId"] }] : [];
 
   // One round-trip: transcript chunks (+ facets) and the episodes matching the query.
-  const { results } = (await meili.multiSearch({
+  const res = await meili.multiSearch({
     queries: [
       {
         indexUid: CHUNKS_INDEX,
         q,
-        filter: buildFilter(body),
+        filter,
+        distinct: body.distinct ? "episodeId" : undefined,
         sort: SORTS[body.sort],
         facets: ["guest", "isLex", "source"],
         hitsPerPage: HITS_PER_PAGE,
@@ -44,11 +53,16 @@ export async function POST(req: Request) {
         highlightPostTag: "__/HL__",
         showRankingScore: true,
       },
-      ...(q
-        ? [{ indexUid: EPISODES_INDEX, q, limit: 4, attributesToSearchOn: ["guest"], rankingScoreThreshold: 0.9 }]
-        : []),
+      ...episodeQuery,
+      ...countQuery,
     ],
-  })) as MultiSearchResponse;
+  }).catch((e: { cause?: { code?: string } }) => {
+    // The indexes are created by `pnpm data:setup`; until then the archive is still loading.
+    if (e.cause?.code === "index_not_found") return null;
+    throw e;
+  });
+  if (!res) return NextResponse.json({ error: "loading" }, { status: 503 });
+  const { results } = res as MultiSearchResponse;
 
   const chunks = results[0];
   const response: SearchResponse & { semantic: boolean } = {
@@ -59,7 +73,8 @@ export async function POST(req: Request) {
     processingTimeMs: chunks.processingTimeMs,
     facetDistribution: chunks.facetDistribution ?? {},
     semanticHitCount: (chunks as { semanticHitCount?: number }).semanticHitCount,
-    episodes: (results[1]?.hits ?? []) as Episode[],
+    episodes: (episodeQuery.length ? results[1].hits : []) as Episode[],
+    momentsPerEpisode: countQuery.length ? results.at(-1)?.facetDistribution?.episodeId : undefined,
     semantic: useHybrid,
   };
   return NextResponse.json(response);

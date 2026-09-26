@@ -1,7 +1,7 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Loader2, Mic, Search, Sparkles, Type } from "lucide-react";
+import { ChevronLeft, ChevronRight, Layers, Loader2, Mic, Search, Sparkles, Type, X } from "lucide-react";
 import { useDeferredValue } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,6 +51,8 @@ export function SearchPage() {
     sort: state.sort,
     speaker: state.speaker,
     guests: state.guests,
+    episodeId: state.episodeId,
+    distinct: state.distinct,
   });
 
   const { data: status } = useQuery({
@@ -58,18 +60,24 @@ export function SearchPage() {
     queryFn: async (): Promise<Status> => (await fetch("/api/status")).json(),
     refetchInterval: (query) => (query.state.data?.semanticReady ? false : 15_000),
   });
-  const { data, isFetching, isError } = useQuery({
+  const { data, isFetching, isError, error } = useQuery({
     queryKey: ["search", request],
     queryFn: async (): Promise<SearchResponse & { semantic: boolean }> => {
       const res = await fetch("/api/search", { method: "POST", body: JSON.stringify(request) });
+      if (res.status === 503) throw new Error("loading");
       if (!res.ok) throw new Error("Search failed");
       return res.json();
     },
     placeholderData: keepPreviousData,
+    // While the archive is loading, retry every 20 s so the page comes alive on its own.
+    refetchInterval: (query) => (query.state.error ? 20_000 : false),
+    retry: (count, error) => error.message !== "loading" && count < 2,
   });
 
   // Semantic search ranks every chunk, so the total count isn't meaningful: cap paging instead.
   const semantic = !!data?.semantic;
+  const grouped = request.distinct;
+  const focused = data?.hits[0] && state.episodeId ? data.hits[0] : undefined;
   const totalPages = data ? (semantic ? Math.min(data.totalPages, 10) : data.totalPages) : 0;
 
   return (
@@ -167,19 +175,32 @@ export function SearchPage() {
               {data ? (
                 semantic ? (
                   <>
-                    Best matches, ranked by meaning + keywords
+                    {grouped ? "Best moment of each episode" : "Best matches"}, ranked by meaning + keywords
                     {data.semanticHitCount !== undefined && <> · {data.semanticHitCount} on this page found by meaning only</>}
                   </>
                 ) : (
                   <>
                     <span className="font-medium text-foreground">{data.totalHits.toLocaleString()}</span>{" "}
-                    {state.q ? "moments" : "passages"}
+                    {grouped ? "episodes" : state.q ? "moments" : "passages"}
                   </>
                 )
               ) : (
                 "Searching…"
               )}
             </p>
+            <div className="flex items-center gap-2">
+            <button
+              onClick={() => state.setDistinct(!state.distinct)}
+              aria-pressed={state.distinct}
+              title="Meilisearch distinct on episodeId: keep only the best moment of each episode"
+              className={cn(
+                "flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground",
+                state.distinct && "border-[var(--brand)] bg-[var(--brand)]/10 text-foreground",
+              )}
+            >
+              <Layers className="size-3.5" />
+              One per episode
+            </button>
             <div className="flex rounded-lg border p-0.5">
               {SORTS.map((s) => (
                 <button
@@ -194,14 +215,40 @@ export function SearchPage() {
                 </button>
               ))}
             </div>
+            </div>
           </div>
 
-          {isError && <p className="text-sm text-destructive">Search failed. Is Meilisearch running?</p>}
+          {state.episodeId && (
+            <div className="flex items-center gap-2 text-sm">
+              <span className="flex items-center gap-1.5 rounded-full bg-muted py-1 pr-1.5 pl-3">
+                Only in {focused ? `${focused.episodeNumber ? `#${focused.episodeNumber} ` : ""}${focused.guest}` : "this episode"}
+                <button onClick={() => state.setEpisode(undefined)} aria-label="Search every episode">
+                  <X className="size-3.5" />
+                </button>
+              </span>
+            </div>
+          )}
+
+          {isError &&
+            (error?.message === "loading" ? (
+              <p className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+                <Loader2 className="size-4 animate-spin" />
+                The transcripts are being loaded into Meilisearch. This page will work in a few minutes.
+              </p>
+            ) : (
+              <p className="text-sm text-destructive">Search failed. Is Meilisearch running?</p>
+            ))}
 
           <div className={cn("grid gap-3 transition-opacity", isFetching && "opacity-60")}>
             {!data
               ? Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-36 rounded-xl" />)
-              : data.hits.map((hit) => <QuoteCard key={hit.id} hit={hit} onGuest={state.toggleGuest} />)}
+              : data.hits.map((hit) => <QuoteCard
+                    key={hit.id}
+                    hit={hit}
+                    onGuest={state.toggleGuest}
+                    moreMoments={grouped ? (data.momentsPerEpisode?.[hit.episodeId] ?? 1) - 1 : 0}
+                    onEpisode={state.setEpisode}
+                  />)}
             {data && data.hits.length === 0 && (
               <p className="py-12 text-center text-muted-foreground">
                 Nothing found. Try fewer words, or move the slider towards semantic.
