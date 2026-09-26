@@ -20,6 +20,7 @@ Episodes #346–#386 (roughly) are missing: neither source covers them.
 | Guest list with type-ahead | **Facets** + **facet search** |
 | "Episodes with …" chips above the results | **Multi-search** (`chunks` + `episodes` in one request) |
 | Newest / oldest | **Sort** on `episodeNumber` |
+| "One per episode" toggle, "+N more moments in this episode" | **`distinct`** on `episodeId`, plus a facet-only query for per-episode counts |
 | "Context" under a hit | Filter `episodeId = … AND position X TO Y` + sort |
 | Chat page with a timestamped link for every claim | **`/chats` conversational search** (LLM calls a hybrid-search tool, streams progress + sources) |
 | Chat with a single episode | **Tenant token** with a search rule `episodeId = …` |
@@ -57,6 +58,48 @@ CHAT_BASE_URL=            # required for mistral (https://api.mistral.ai/v1) and
 
 Re-running setup re-sends the documents and settings. Meilisearch only re-embeds a document when its
 rendered embedder template changes, so a second run should not redo the whole embedding pass.
+
+## Production
+
+| Piece | Where |
+|---|---|
+| Front end | Vercel, team `meili`, project `talk-with-lex`: https://talk-with-lex.vercel.app |
+| Data | `search.hackersearch.meilisearch.com` (qdq-server box), indexes `lex-chunks` + `lex-episodes`, chat workspace `talk-with-lex` |
+| Chat LLM | `claude-sonnet-4-5` through LUMEN on the same box (loopback `http://127.0.0.1:8080/v1`), virtual key `talk-with-lex-demo` with a $20 hard budget and 60 requests/minute |
+
+Keys (no master key leaves the box):
+
+| Key | Actions | Indexes | Used by |
+|---|---|---|---|
+| `talk-with-lex-server` | `search`, `documents.get`, `settings.get`, `stats.get`, `tasks.get` | `lex-chunks`, `lex-episodes` | Vercel API routes (`MEILI_API_KEY`) |
+| `talk-with-lex-chat` | `search`, `chatCompletions` | `lex-chunks` | parent of the 30-min tenant tokens the browser uses for `/chats` (`MEILI_CHAT_KEY`) |
+
+The LUMEN key is stored on the box only, in `/etc/talk-with-lex/lumen-key.json` (root, 0600).
+
+### Re-deploying the data
+
+Embeddings are computed once locally and shipped with the documents (`regenerate: false`),
+so the production instance never runs the ~80 min embedding pass next to live traffic.
+
+```bash
+cd web
+pnpm data:export-vectors            # local instance -> data/chunks-with-vectors.ndjson (~450 MB)
+ssh -N -L 7799:127.0.0.1:7700 root@62.210.158.50 &
+MEILI_HOST=http://127.0.0.1:7799 \
+MEILI_MASTER_KEY="$(ssh root@62.210.158.50 'sed -n "s/^MEILI_MASTER_KEY=//p" /etc/meilisearch/meilisearch.env')" \
+CHAT_API_KEY="$(ssh root@62.210.158.50 'python3 -c "import json; print(json.load(open(\"/etc/talk-with-lex/lumen-key.json\"))[\"key\"])"')" \
+CHAT_SOURCE=openAi CHAT_BASE_URL=http://127.0.0.1:8080/v1 CHAT_MODEL=claude-sonnet-4-5 \
+MEILI_CHUNKS_INDEX=lex-chunks MEILI_EPISODES_INDEX=lex-episodes CHAT_WORKSPACE=talk-with-lex \
+node scripts/setup-meilisearch.ts
+```
+
+Tasks queue behind the `hn` indexer, so expect a wait before the import starts.
+
+### Re-deploying the front end
+
+```bash
+cd web && vercel deploy --prod --scope meili
+```
 
 ## Demo script
 
