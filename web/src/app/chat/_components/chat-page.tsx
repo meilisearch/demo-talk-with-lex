@@ -1,14 +1,15 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUp, Globe, Loader2, Mic, Play, RotateCcw, Search, Square } from "lucide-react";
+import { ArrowUp, ChevronDown, ChevronRight, Globe, Loader2, Mic, Play, RotateCcw, Search, Square } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { ChatTurn } from "@/lib/chat-types";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import type { ChatSearchStep, ChatSource, ChatTurn } from "@/lib/chat-types";
 import { type Episode, formatTimestamp } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { usePlayer } from "../../_components/player-store";
@@ -42,6 +43,99 @@ function parseYoutube(href: string | undefined) {
   }
 }
 
+/** Tool calls folded into one line, like Claude Code: the live query while searching, the full list on click. */
+function SearchSteps({ searches, active }: { searches: ChatSearchStep[]; active: boolean }) {
+  const last = searches[searches.length - 1];
+  return (
+    <Collapsible>
+      <CollapsibleTrigger className="group flex max-w-full items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground">
+        {active ? <Loader2 className="size-3.5 shrink-0 animate-spin" /> : <Search className="size-3.5 shrink-0" />}
+        <span className="shrink-0">
+          {active
+            ? "Searching the transcripts"
+            : `Searched the transcripts ${searches.length} ${searches.length === 1 ? "time" : "times"}`}
+        </span>
+        {active && last && <span className="truncate font-mono text-xs">{last.q || "(browse)"}</span>}
+        <ChevronRight className="size-3.5 shrink-0 transition-transform group-data-[panel-open]:rotate-90" />
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <ul className="mt-2 ml-[7px] space-y-1 border-l pl-4">
+          {searches.map((s) => (
+            <li key={s.callId} className="font-mono text-xs text-muted-foreground">
+              {s.q || "(browse)"}
+              {s.filter && <span className="text-[var(--brand)]"> · {s.filter}</span>}
+            </li>
+          ))}
+        </ul>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+/** Source chips clamped to one line; the rest shows on demand. */
+function SourceList({ sources }: { sources: ChatSource[] }) {
+  const play = usePlayer((s) => s.play);
+  const [expanded, setExpanded] = useState(false);
+  const [hidden, setHidden] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // Count the chips that wrap past the first line (the layout is the same collapsed or expanded).
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const measure = () => {
+      const chips = Array.from(el.children) as HTMLElement[];
+      const firstTop = chips[0]?.offsetTop ?? 0;
+      setHidden(chips.filter((c) => c.offsetTop > firstTop).length);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [sources.length]);
+
+  return (
+    <div className="space-y-1.5 border-t pt-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+          Sources · {sources.length} passages retrieved
+        </p>
+        {hidden > 0 && (
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            {expanded ? "Show less" : `Show all (+${hidden})`}
+            <ChevronDown className={cn("size-3.5 transition-transform", expanded && "rotate-180")} />
+          </button>
+        )}
+      </div>
+      <div ref={listRef} className={cn("flex flex-wrap gap-1.5", !expanded && "max-h-[26px] overflow-hidden")}>
+        {sources.map((s) => (
+          <button
+            key={s.id}
+            title={s.text}
+            onClick={() =>
+              play({
+                videoId: s.episodeId,
+                start: s.start,
+                title: `${s.episodeNumber ? `#${s.episodeNumber} ` : ""}${s.guest}`,
+                label: `${s.timestamp} · ${s.speaker ?? s.guest}`,
+              })
+            }
+            className="flex max-w-full items-center gap-1 truncate rounded-md border px-2 py-1 text-xs hover:border-[var(--brand)] hover:text-[var(--brand)]"
+          >
+            <Play className="size-3 shrink-0" />
+            {s.episodeNumber ? `#${s.episodeNumber} ` : ""}
+            {s.guest}
+            <span className="font-mono text-muted-foreground">{s.timestamp}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function AssistantTurn({ turn, streaming }: { turn: ChatTurn; streaming: boolean }) {
   const play = usePlayer((s) => s.play);
   const components: Components = {
@@ -72,20 +166,7 @@ function AssistantTurn({ turn, streaming }: { turn: ChatTurn; streaming: boolean
 
   return (
     <div className="space-y-3">
-      {turn.searches.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {turn.searches.map((s) => (
-            <span
-              key={s.callId}
-              className="flex items-center gap-1.5 rounded-full border bg-muted/40 px-2.5 py-1 font-mono text-[11px] text-muted-foreground"
-            >
-              <Search className="size-3" />
-              {s.q || "(browse)"}
-              {s.filter && <span className="text-[var(--brand)]">· {s.filter}</span>}
-            </span>
-          ))}
-        </div>
-      )}
+      {turn.searches.length > 0 && <SearchSteps searches={turn.searches} active={streaming && !turn.content} />}
       {turn.error ? (
         <p className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{turn.error}</p>
       ) : turn.content ? (
@@ -95,42 +176,15 @@ function AssistantTurn({ turn, streaming }: { turn: ChatTurn; streaming: boolean
           </ReactMarkdown>
         </div>
       ) : (
-        streaming && (
+        streaming &&
+        turn.searches.length === 0 && (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
-            {turn.searches.length ? "Reading transcripts…" : "Searching Meilisearch…"}
+            Searching Meilisearch…
           </p>
         )
       )}
-      {turn.sources.length > 0 && (
-        <div className="space-y-1.5 border-t pt-3">
-          <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-            Sources · {turn.sources.length} passages retrieved
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {turn.sources.map((s) => (
-              <button
-                key={s.id}
-                title={s.text}
-                onClick={() =>
-                  play({
-                    videoId: s.episodeId,
-                    start: s.start,
-                    title: `${s.episodeNumber ? `#${s.episodeNumber} ` : ""}${s.guest}`,
-                    label: `${s.timestamp} · ${s.speaker ?? s.guest}`,
-                  })
-                }
-                className="flex max-w-full items-center gap-1 truncate rounded-md border px-2 py-1 text-xs hover:border-[var(--brand)] hover:text-[var(--brand)]"
-              >
-                <Play className="size-3 shrink-0" />
-                {s.episodeNumber ? `#${s.episodeNumber} ` : ""}
-                {s.guest}
-                <span className="font-mono text-muted-foreground">{s.timestamp}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      {turn.sources.length > 0 && <SourceList sources={turn.sources} />}
     </div>
   );
 }
