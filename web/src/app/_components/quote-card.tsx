@@ -1,10 +1,11 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, ExternalLink, MessagesSquare, Play } from "lucide-react";
+import { ChevronDown, ExternalLink, MessagesSquare, Play, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
-import { Badge } from "@/components/ui/badge";
+import { badgeVariants } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { type Chunk, type ChunkHit, youtubeUrl } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Highlight } from "./highlight";
@@ -13,6 +14,67 @@ import { usePlayer } from "./player-store";
 function SpeakerLabel({ chunk }: { chunk: Chunk }) {
   if (!chunk.speaker) return <span className="text-muted-foreground italic">Speaker unknown</span>;
   return <span className={cn("font-medium", chunk.isLex && "text-[var(--brand)]")}>{chunk.speaker}</span>;
+}
+
+const RULE_LABELS: Record<string, string> = {
+  words: "Words",
+  typo: "Typos",
+  proximity: "Proximity",
+  attributeRank: "Attribute",
+  wordPosition: "Position",
+  exactness: "Exactness",
+};
+
+/** In a hybrid search, Meilisearch reports `vectorSort` for the hits its embeddings ranked. */
+const rankedByMeaning = (hit: ChunkHit) => !!hit._rankingScoreDetails?.vectorSort;
+
+/** The ranking score, with on hover what produced it (`showRankingScoreDetails`). */
+function ScoreBadge({ hit, score }: { hit: ChunkHit; score: number }) {
+  const details = hit._rankingScoreDetails;
+  const semantic = rankedByMeaning(hit);
+  const rules = Object.entries(details ?? {})
+    .flatMap(([name, d]) => (d?.score === undefined ? [] : [{ name, order: d.order, score: d.score }]))
+    .sort((a, b) => a.order - b.order);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        className={cn(
+          badgeVariants({ variant: "outline" }),
+          "ml-auto cursor-help font-mono text-[10px]",
+          semantic && "border-[var(--brand)]/40 text-[var(--brand)]",
+        )}
+      >
+        {semantic && <Sparkles />}
+        {score.toFixed(2)}
+      </TooltipTrigger>
+      <TooltipContent side="left" className="flex-col items-start gap-1.5 py-2">
+        {semantic ? (
+          <>
+            <span className="font-medium">Ranked by meaning</span>
+            <span className="opacity-80">
+              AI embeddings found this passage close to your query, even without the exact words.
+            </span>
+            <span className="font-mono">similarity {details?.vectorSort?.similarity.toFixed(3)}</span>
+          </>
+        ) : (
+          <>
+            <span className="font-medium">Ranked by keywords</span>
+            {rules.length > 0 && (
+              <span className="grid grid-cols-[auto_auto] gap-x-4 font-mono">
+                {rules.map((r) => (
+                  <span key={r.name} className="contents">
+                    <span className="opacity-80">{RULE_LABELS[r.name] ?? r.name}</span>
+                    <span className="text-right">{r.score.toFixed(2)}</span>
+                  </span>
+                ))}
+              </span>
+            )}
+          </>
+        )}
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 /** The passages around a hit, fetched on demand (filter on episodeId + position range). */
@@ -61,7 +123,12 @@ export function QuoteCard({
   const label = `${hit.timestamp} · ${hit.speaker ?? hit.guest}`;
 
   return (
-    <article className="group rounded-xl border bg-card p-4 transition-colors hover:border-foreground/20">
+    <article
+      className={cn(
+        "group rounded-xl border bg-card p-4 transition-colors hover:border-foreground/20",
+        rankedByMeaning(hit) && "border-[var(--brand)]/35 hover:border-[var(--brand)]/60",
+      )}
+    >
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
         <button
           onClick={() => play({ videoId: hit.episodeId, start: hit.start, title: hit.episodeTitle, label })}
@@ -82,11 +149,7 @@ export function QuoteCard({
             <Highlight value={hit._formatted?.chapter ?? hit.chapter} className="truncate" />
           </>
         )}
-        {hit._rankingScore !== undefined && (
-          <Badge variant="outline" className="ml-auto font-mono text-[10px]">
-            {hit._rankingScore.toFixed(2)}
-          </Badge>
-        )}
+        {hit._rankingScore !== undefined && <ScoreBadge hit={hit} score={hit._rankingScore} />}
       </div>
 
       <blockquote className="mt-2.5 font-serif text-[17px] leading-relaxed">

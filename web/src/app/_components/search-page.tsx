@@ -1,13 +1,12 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Layers, Loader2, Mic, Search, Sparkles, Type, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Layers, Loader2, Mic, Search, Sparkles, X } from "lucide-react";
 import { useDeferredValue } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Slider } from "@/components/ui/slider";
-import type { SearchResponse, SortOption } from "@/lib/types";
+import { SEMANTIC_RATIO, type SearchResponse, type SortOption } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { FiltersPanel } from "./filters-panel";
 import { QuoteCard } from "./quote-card";
@@ -36,17 +35,10 @@ const EXAMPLES = [
   "Dostoevsky", // typo-tolerant too: try "Dostoyevski"
 ];
 
-function modeLabel(ratio: number) {
-  if (ratio === 0) return "Keyword";
-  if (ratio === 1) return "Semantic";
-  return "Hybrid";
-}
-
 export function SearchPage() {
   const state = useSearch();
   const request = useDeferredValue({
     q: state.q,
-    semanticRatio: state.semanticRatio,
     page: state.page,
     sort: state.sort,
     speaker: state.speaker,
@@ -106,17 +98,7 @@ export function SearchPage() {
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-3">
-          <div className="flex min-w-72 items-center gap-3">
-            <Type className="size-4 text-muted-foreground" />
-            <Slider
-              className="w-40"
-              min={0}
-              max={1}
-              step={0.1}
-              disabled={status && !status.semanticReady}
-              value={[state.semanticRatio]}
-              onValueChange={(v) => state.setSemanticRatio((v as number[])[0])}
-            />
+          <div className="flex items-center gap-2">
             <Sparkles className="size-4 text-[var(--brand)]" />
             {status && !status.semanticReady ? (
               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -124,10 +106,9 @@ export function SearchPage() {
               </span>
             ) : (
               <span className="text-sm">
-                <span className="font-medium">{modeLabel(state.semanticRatio)}</span>
-                <span className="ml-1 font-mono text-xs text-muted-foreground">
-                  semanticRatio={state.semanticRatio.toFixed(1)}
-                </span>
+                <span className="font-medium">Hybrid search</span>
+                <span className="ml-1 text-muted-foreground">keywords + meaning</span>
+                <span className="ml-1.5 font-mono text-xs text-muted-foreground">semanticRatio={SEMANTIC_RATIO}</span>
               </span>
             )}
           </div>
@@ -176,7 +157,15 @@ export function SearchPage() {
                 semantic ? (
                   <>
                     {grouped ? "Best moment of each episode" : "Best matches"}, ranked by meaning + keywords
-                    {data.semanticHitCount !== undefined && <> · {data.semanticHitCount} on this page found by meaning only</>}
+                    {!!data.semanticHitCount && (
+                      <>
+                        {" "}·{" "}
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="inline-block size-3 rounded-[4px] border-2 border-[var(--brand)]/35" />
+                          {data.semanticHitCount} found by meaning
+                        </span>
+                      </>
+                    )}
                   </>
                 ) : (
                   <>
@@ -251,7 +240,7 @@ export function SearchPage() {
                   />)}
             {data && data.hits.length === 0 && (
               <p className="py-12 text-center text-muted-foreground">
-                Nothing found. Try fewer words, or move the slider towards semantic.
+                Nothing found. Try fewer words, or describe the idea in your own words.
               </p>
             )}
           </div>

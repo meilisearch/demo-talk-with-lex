@@ -5,7 +5,6 @@ import type { SearchRequest, SortOption, SpeakerFilter } from "@/lib/types";
 
 interface SearchState extends SearchRequest {
   setQ: (q: string) => void;
-  setSemanticRatio: (r: number) => void;
   setSort: (s: SortOption) => void;
   setPage: (p: number) => void;
   setSpeaker: (s: SpeakerFilter) => void;
@@ -17,7 +16,6 @@ interface SearchState extends SearchRequest {
 
 export const useSearch = create<SearchState>()((set) => ({
   q: "",
-  semanticRatio: 0.3,
   page: 1,
   sort: "relevance",
   speaker: "all",
@@ -25,7 +23,6 @@ export const useSearch = create<SearchState>()((set) => ({
   episodeId: undefined,
   distinct: false,
   setQ: (q) => set({ q, page: 1 }),
-  setSemanticRatio: (semanticRatio) => set({ semanticRatio, page: 1 }),
   setSort: (sort) => set({ sort, page: 1 }),
   setPage: (page) => set({ page }),
   setSpeaker: (speaker) => set({ speaker, page: 1 }),
