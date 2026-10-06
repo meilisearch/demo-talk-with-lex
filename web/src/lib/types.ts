@@ -34,17 +34,32 @@ export interface Chunk {
   source: TranscriptSource;
 }
 
+/**
+ * Meilisearch `showRankingScoreDetails`. In a hybrid search each hit carries the details of the side
+ * that ranked it: `vectorSort` when it came from the embeddings, the keyword ranking rules otherwise.
+ */
+export interface RankingScoreDetails {
+  vectorSort?: { order: number; similarity: number };
+  words?: { order: number; score: number; matchingWords: number; maxMatchingWords: number };
+  typo?: { order: number; score: number; typoCount: number; maxTypoCount: number };
+  exactness?: { order: number; score: number; matchType: string };
+  [rule: string]: { order: number; score?: number } | undefined;
+}
+
 export interface ChunkHit extends Chunk {
   _formatted?: Partial<Record<keyof Chunk, string>>;
   _rankingScore?: number;
+  _rankingScoreDetails?: RankingScoreDetails;
 }
+
+/** Hybrid search weight: 0 is keywords only, 1 is meaning only. */
+export const SEMANTIC_RATIO = 0.5;
 
 export type SpeakerFilter = "all" | "lex" | "guest";
 export type SortOption = "relevance" | "newest" | "oldest";
 
 export interface SearchRequest {
   q: string;
-  semanticRatio: number;
   page: number;
   sort: SortOption;
   speaker: SpeakerFilter;

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { MultiSearchResponse } from "meilisearch";
 import { CHUNKS_INDEX, EMBEDDER, EPISODES_INDEX, meili, quote, semanticReady } from "@/lib/meili";
-import type { ChunkHit, Episode, SearchRequest, SearchResponse } from "@/lib/types";
+import { type ChunkHit, type Episode, SEMANTIC_RATIO, type SearchRequest, type SearchResponse } from "@/lib/types";
 
 const HITS_PER_PAGE = 15;
 
@@ -23,7 +23,7 @@ function buildFilter(body: SearchRequest): string[] {
 export async function POST(req: Request) {
   const body = (await req.json()) as SearchRequest;
   const q = body.q.trim();
-  const useHybrid = !!q && body.semanticRatio > 0 && (await semanticReady());
+  const useHybrid = !!q && (await semanticReady());
   const filter = buildFilter(body);
   const episodeQuery = q
     ? [{ indexUid: EPISODES_INDEX, q, limit: 4, attributesToSearchOn: ["guest"], rankingScoreThreshold: 0.9 }]
@@ -45,13 +45,15 @@ export async function POST(req: Request) {
         facets: ["guest", "isLex", "source"],
         hitsPerPage: HITS_PER_PAGE,
         page: body.page,
-        hybrid: useHybrid ? { embedder: EMBEDDER, semanticRatio: body.semanticRatio } : undefined,
+        hybrid: useHybrid ? { embedder: EMBEDDER, semanticRatio: SEMANTIC_RATIO } : undefined,
         attributesToHighlight: ["text", "chapter"],
         attributesToCrop: ["text:60"],
         cropMarker: "…",
         highlightPreTag: "__HL__",
         highlightPostTag: "__/HL__",
         showRankingScore: true,
+        // Tells, per hit, whether keywords or embeddings ranked it (shown on hover in the UI).
+        showRankingScoreDetails: true,
       },
       ...episodeQuery,
       ...countQuery,

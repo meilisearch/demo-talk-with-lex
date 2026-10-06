@@ -12,8 +12,8 @@ with a timestamped link for every claim.
 
 - **Find a moment.** Type a quote, an idea, or a name. Put a phrase in double quotes (`"love is the answer"`) to find
   it word for word. Every result starts with its timestamp; press it to play the video from that second.
-- **Search by meaning.** Move the slider from keywords towards meaning: `afraid to die` finds conversations about
-  mortality that never use those words.
+- **Search by meaning.** Every search blends keywords and meaning: `afraid to die` finds conversations about
+  mortality that never use those words. Results found by meaning get a red border; hover a score to see why it ranked.
 - **Filter by speaker.** Keep only what Lex said, or only his guests, and narrow down to one or more guests.
 - **One result per episode.** Group results so each episode appears once with its best moment, then open
   "+N more moments in this episode" to see the rest.
@@ -27,7 +27,7 @@ with a timestamped link for every claim.
 | In the app | Meilisearch capability |
 |---|---|
 | `"love is the answer"` finds the exact moments | Phrase search, highlighting, and cropping |
-| Words ↔ meaning slider | [Hybrid search](https://www.meilisearch.com/docs/capabilities/hybrid_search/overview) with a HuggingFace embedder (`BAAI/bge-small-en-v1.5`) running inside Meilisearch |
+| Keywords + meaning, scores on hover | [Hybrid search](https://www.meilisearch.com/docs/capabilities/hybrid_search/overview) (`semanticRatio: 0.5`) with a HuggingFace embedder (`BAAI/bge-small-en-v1.5`) running inside Meilisearch, and `showRankingScoreDetails` to tell keyword hits from semantic ones |
 | Who said it: Lex or guests, with counts | Filter on `isLex`, counts from facets |
 | Guest list with type-ahead | Facets and facet search |
 | Newest and oldest | Sort on `episodeNumber` |
