@@ -12,7 +12,8 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { gzipSync } from "node:zlib";
-import type { Chunk, Episode } from "../src/lib/types.ts";
+import { guestNames } from "../src/lib/guests.ts";
+import { type Chunk, type Episode, wordCount } from "../src/lib/types.ts";
 import { loadEnv } from "./env.ts";
 
 loadEnv();
@@ -85,7 +86,12 @@ const CHAT_TEMPLATE =
   "Episode: {{doc.episodeTitle}}\nGuest: {{doc.guest}}\n{% if doc.speaker %}Speaker: {{doc.speaker}}\n{% endif %}{% if doc.chapter %}Chapter: {{doc.chapter}}\n{% endif %}Timestamp: {{doc.timestamp}}\nLink: https://www.youtube.com/watch?v={{doc.episodeId}}&t={{doc.start}}s\nTranscript: {{doc.text}}";
 
 async function main() {
-  const episodes: Episode[] = JSON.parse(await readFile(path.join(DATA, "episodes.json"), "utf8"));
+  // `guests` is recomputed here too, so data fetched before the field existed (and the exported vectors file)
+  // imports without a re-fetch.
+  const episodes: Episode[] = (JSON.parse(await readFile(path.join(DATA, "episodes.json"), "utf8")) as Episode[]).map(
+    (e) => ({ ...e, guests: guestNames(e.guest, e.episodeNumber) }),
+  );
+  const guestsByEpisode = new Map(episodes.map((e) => [e.id, e.guests]));
 
   await meili("/experimental-features", { method: "PATCH", body: JSON.stringify({ chatCompletions: true }) });
   console.log("✓ experimental feature: chatCompletions");
@@ -94,9 +100,11 @@ async function main() {
   await client.createIndex(CHUNKS, { primaryKey: "id" }).waitTask().catch(() => undefined);
   const chunks = client.index<Chunk>(CHUNKS);
   const baseSettings = {
-    searchableAttributes: ["text", "speaker", "guest", "chapter", "episodeTitle"],
+    // Not episodeTitle: every passage of an episode carries the same title, and "| Lex Fridman Podcast #N" made
+    // the word "Lex" match all 97k passages.
+    searchableAttributes: ["text", "speaker", "guests", "guest", "chapter"],
     displayedAttributes: ["*"],
-    filterableAttributes: ["episodeId", "episodeNumber", "guest", "speaker", "isLex", "source", "position", "start"],
+    filterableAttributes: ["episodeId", "episodeNumber", "guest", "guests", "speaker", "isLex", "source", "position", "start", "wordCount"],
     sortableAttributes: ["episodeNumber", "start", "position"],
     rankingRules: ["words", "typo", "proximity", "attribute", "sort", "exactness"],
     typoTolerance: { minWordSizeForTypos: { oneTypo: 5, twoTypos: 9 } },
@@ -143,7 +151,8 @@ async function main() {
   const lines = createInterface({ input: createReadStream(importFile) });
   for await (const line of lines) {
     if (!line.trim()) continue;
-    batch.push(JSON.parse(line));
+    const chunk = JSON.parse(line) as Chunk;
+    batch.push({ ...chunk, guests: guestsByEpisode.get(chunk.episodeId) ?? [chunk.guest], wordCount: wordCount(chunk.text) });
     if (batch.length === BATCH) {
       lastTask = await addBatch(batch);
       total += batch.length;
@@ -163,10 +172,10 @@ async function main() {
   await waitTask(
     (
       await episodesIndex.updateSettings({
-        searchableAttributes: ["guest", "topic", "title", "tagline", "chapters.title"],
-        filterableAttributes: ["id", "source", "episodeNumber", "guest"],
+        searchableAttributes: ["guests", "guest", "topic", "title", "tagline", "chapters.title"],
+        filterableAttributes: ["id", "source", "episodeNumber", "guest", "guests"],
         sortableAttributes: ["episodeNumber"],
-        displayedAttributes: ["id", "episodeNumber", "title", "guest", "topic", "tagline", "source", "durationSec", "chunkCount", "speakers"],
+        displayedAttributes: ["id", "episodeNumber", "title", "guest", "guests", "topic", "tagline", "source", "durationSec", "chunkCount", "speakers"],
       })
     ).taskUid,
     "episodes settings",
@@ -195,7 +204,7 @@ async function main() {
           searchQParam:
             "Search query: the key words or a short paraphrase of what was said (e.g. `meaning of life`, `love is the answer`). Not a full question.",
           searchFilterParam:
-            "Optional Meilisearch filter. Examples: `isLex = true` (only Lex's own words, recent episodes), `guest = \"Elon Musk\"`, `speaker = \"Elon Musk\"`, `episodeNumber >= 400`. Leave empty unless the user explicitly restricts who spoke or which episode.",
+            "Optional Meilisearch filter. Examples: `isLex = true` (only Lex's own words, recent episodes), `guests = \"Elon Musk\"` (every episode with that guest), `speaker = \"Elon Musk\"`, `episodeNumber >= 400`. Leave empty unless the user explicitly restricts who spoke or which episode.",
           searchIndexUidParam: `Index to search. Always use \`${CHUNKS}\`.`,
         },
       }),

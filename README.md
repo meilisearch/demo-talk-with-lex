@@ -11,10 +11,15 @@ with a timestamped link for every claim.
 ## What you can do
 
 - **Find a moment.** Type a quote, an idea, or a name. Put a phrase in double quotes (`"love is the answer"`) to find
-  it word for word. Every result starts with its timestamp; press it to play the video from that second.
+  it word for word (keywords only, so every result contains the phrase). Every result starts with its timestamp; press
+  it to play the video from that second.
 - **Search by meaning.** Every search blends keywords and meaning: `afraid to die` finds conversations about
-  mortality that never use those words. Results found by meaning get a red border; hover a score to see why it ranked.
-- **Filter by speaker.** Keep only what Lex said, or only his guests, and narrow down to one or more guests.
+  mortality that never use those words. A question (`what is consciousness?`) leans on meaning, so filler words like
+  "what" and "about" don't drive the ranking. Results found by meaning get a red border; hover a score to see why it
+  ranked.
+- **Filter by speaker.** Keep only what Lex said, or only his guests, and narrow down to one or more guests. Debates
+  and panels list each guest by name ("Alien Debate" is Sara Walker and Lee Cronin).
+- **Share a search.** The query, filters and sort live in the URL, and Back undoes the last change.
 - **One result per episode.** Group results so each episode appears once with its best moment, then open
   "+N more moments in this episode" to see the rest.
 - **Read the conversation around a hit.** Expand the passages just before and after, like reading the transcript.
@@ -27,9 +32,9 @@ with a timestamped link for every claim.
 | In the app | Meilisearch capability |
 |---|---|
 | `"love is the answer"` finds the exact moments | Phrase search, highlighting, and cropping |
-| Keywords + meaning, scores on hover | [Hybrid search](https://www.meilisearch.com/docs/capabilities/hybrid_search/overview) (`semanticRatio: 0.5`) with a HuggingFace embedder (`BAAI/bge-small-en-v1.5`) running inside Meilisearch, and `showRankingScoreDetails` to tell keyword hits from semantic ones |
+| Keywords + meaning, scores on hover | [Hybrid search](https://www.meilisearch.com/docs/capabilities/hybrid_search/overview) (`semanticRatio: 0.5`, `0.55` for questions) with a HuggingFace embedder (`BAAI/bge-small-en-v1.5`) running inside Meilisearch, and `showRankingScoreDetails` to tell keyword hits from semantic ones |
 | Who said it: Lex or guests, with counts | Filter on `isLex`, counts from facets |
-| Guest list with type-ahead | Facets and facet search |
+| Guest list with type-ahead | Facets on `guests` (one value per person, so multi-guest episodes are findable by name) |
 | Newest and oldest | Sort on `episodeNumber` |
 | "Episodes with …" suggestions above the results | Multi-search (`chunks` and `episodes` in one request) |
 | One per episode, "+N more moments in this episode" | `distinct` on `episodeId`, plus a facet-only query for per-episode counts |
@@ -139,6 +144,10 @@ and retries on its own.
 
 Things to know:
 
+- **Update the indexes before the front end.** The app filters and facets on fields the setup script adds at import
+  (`guests`, `wordCount`). After a change to the setup script, run it on the instance first (step 2), then deploy:
+  a front end that is ahead of its index fails on filters it doesn't know.
+
 - **Meilisearch refuses private and loopback LLM URLs** for chat ("Rejected IP"). If the LLM gateway runs on the same
   machine, point the workspace at its public URL.
 - **A HuggingFace embedder downloads its model on first use.** The instance needs working outbound access to
@@ -151,7 +160,7 @@ Things to know:
 2. Search `meaning of life` and choose **Lex**: only Lex's own questions, from the recent episodes.
 3. Turn on **One per episode**, then open "+18 more moments in this episode" on the George Hotz result.
 4. Type `Dostoyevski`: typo tolerance still finds Dostoevsky.
-5. Slide towards meaning and search `afraid to die`: passages about mortality that never use those words.
+5. Search `afraid to die`: passages about mortality that never use those words (red border = found by meaning).
 6. On a result, open **Context**, then **Chat with this episode** and ask for a five-bullet summary.
 7. On the chat page, ask "What does Lex think love is?" and follow the timestamped citations.
 

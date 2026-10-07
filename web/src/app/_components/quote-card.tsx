@@ -139,7 +139,11 @@ export function QuoteCard({
         </button>
         <SpeakerLabel chunk={hit} />
         <span>·</span>
-        <button onClick={() => onGuest(hit.guest)} className="hover:text-foreground hover:underline">
+        {/* One guest: filter on them. Several ("Alien Debate"): open the episode. */}
+        <button
+          onClick={() => (hit.guests.length === 1 ? onGuest(hit.guests[0]) : onEpisode?.(hit.episodeId))}
+          className="hover:text-foreground hover:underline"
+        >
           {hit.episodeNumber ? `#${hit.episodeNumber} ` : ""}
           {hit.guest}
         </button>
@@ -157,7 +161,7 @@ export function QuoteCard({
       </blockquote>
 
       <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-        <span className="min-w-0 flex-1 truncate" title={hit.episodeTitle}>
+        <span className="min-w-0 basis-full truncate sm:basis-0 sm:flex-1" title={hit.episodeTitle}>
           {hit.episodeTitle}
         </span>
         {moreMoments > 0 && onEpisode && (
