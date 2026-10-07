@@ -8,7 +8,8 @@ import { asyncBufferFromFile, parquetReadObjects } from "hyparquet";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { type Chunk, type Episode, formatTimestamp } from "../src/lib/types.ts";
+import { guestNames } from "../src/lib/guests.ts";
+import { type Chunk, type Episode, formatTimestamp, wordCount } from "../src/lib/types.ts";
 
 const DATA = path.resolve(import.meta.dirname, "../../data");
 const RAW = path.join(DATA, "raw");
@@ -31,7 +32,6 @@ const decode = (s: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
-const wordCount = (s: string) => s.split(/\s+/).filter(Boolean).length;
 const episodeNumberOf = (title: string) => {
   const m = title.match(/#(\d+)/);
   return m ? Number(m[1]) : null;
@@ -75,6 +75,7 @@ function chunkUtterances(ep: Omit<Episode, "chunkCount" | "durationSec" | "speak
       episodeNumber: ep.episodeNumber,
       episodeTitle: ep.title,
       guest: ep.guest,
+      guests: ep.guests,
       speaker: first.speaker,
       isLex: first.speaker ? first.speaker === LEX : null,
       chapter: first.chapter,
@@ -84,6 +85,7 @@ function chunkUtterances(ep: Omit<Episode, "chunkCount" | "durationSec" | "speak
       timestamp: formatTimestamp(first.start),
       position: chunks.length,
       source: ep.source,
+      wordCount: wordCount(text),
     });
   };
 
@@ -179,6 +181,7 @@ async function fetchOfficial() {
           episodeNumber: episodeNumberOf(pageTitle),
           title: pageTitle,
           guest: item.guest || pageTitle.split(":")[0],
+          guests: guestNames(item.guest || pageTitle.split(":")[0], episodeNumberOf(pageTitle)),
           topic: item.topic,
           tagline: item.tagline,
           source: "official" as const,
@@ -239,11 +242,13 @@ async function fetchWhisper(skip: Set<string>) {
     const chapterAt = (t: number) => chapters.findLast((c) => c.start <= t)?.title ?? null;
     // "Guest: Topic | Lex Fridman Podcast #N", sometimes "Guest | Topic | Lex Fridman Podcast #N".
     const [guest, rest = ""] = row.title.includes(":") ? row.title.split(/:\s(.+)/) : row.title.split(/\s\|\s(.+)/);
+    const guestLabel = guest.replace(/^Lex Fridman Podcast #\d+\s*[–-]\s*/, "").trim();
     const ep = {
       id: row.id,
       episodeNumber: episodeNumberOf(row.title),
       title: row.title,
-      guest: guest.replace(/^Lex Fridman Podcast #\d+\s*[–-]\s*/, "").trim(),
+      guest: guestLabel,
+      guests: guestNames(guestLabel, episodeNumberOf(row.title)),
       topic: rest.split("|")[0].replace(/\s*\[Reupload\]/i, "").trim(),
       tagline: row.description.split(/\n|Please support/)[0].trim().slice(0, 240),
       source: "whisper" as const,

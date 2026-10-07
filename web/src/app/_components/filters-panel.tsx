@@ -15,9 +15,8 @@ const SPEAKERS: { value: SpeakerFilter; label: string }[] = [
   { value: "guest", label: "Guests" },
 ];
 
-/** Guest filter: facet distribution for the current query, plus Meilisearch facet search to find any guest. */
+/** Guest filter: facet distribution for the current query, plus a type-ahead over every guest. */
 function GuestFacet({ distribution }: { distribution?: Record<string, number> }) {
-  const q = useSearch((s) => s.q);
   const selected = useSearch((s) => s.guests);
   const toggle = useSearch((s) => s.toggleGuest);
   const [facetQuery, setFacetQuery] = useState("");
@@ -25,9 +24,9 @@ function GuestFacet({ distribution }: { distribution?: Record<string, number> })
   const [expanded, setExpanded] = useState(false);
 
   const { data: found } = useQuery({
-    queryKey: ["facet-search", deferred, q],
+    queryKey: ["facet-search", deferred],
     queryFn: async (): Promise<{ value: string; count: number }[]> =>
-      (await fetch("/api/facet-search", { method: "POST", body: JSON.stringify({ facetQuery: deferred, q }) })).json(),
+      (await fetch("/api/facet-search", { method: "POST", body: JSON.stringify({ facetQuery: deferred }) })).json(),
     enabled: deferred.length > 0,
   });
 
@@ -124,7 +123,7 @@ export function FiltersPanel({ data }: { data?: SearchResponse }) {
         </p>
       </section>
 
-      <GuestFacet distribution={data?.facetDistribution.guest} />
+      <GuestFacet distribution={data?.facetDistribution.guests} />
     </aside>
   );
 }

@@ -1,16 +1,25 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Layers, Loader2, Mic, Search, Sparkles, X } from "lucide-react";
-import { useDeferredValue } from "react";
+import { ChevronLeft, ChevronRight, Layers, Loader2, Mic, Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
+import { useDeferredValue, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { SEMANTIC_RATIO, type SearchResponse, type SortOption } from "@/lib/types";
+import {
+  isExactPhrase,
+  isQuestion,
+  QUESTION_SEMANTIC_RATIO,
+  SEMANTIC_RATIO,
+  type SearchResponse,
+  type SortOption,
+} from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { FiltersPanel } from "./filters-panel";
 import { QuoteCard } from "./quote-card";
-import { useSearch } from "./search-store";
+import { searchFromQueryString, searchToQueryString } from "./search-params";
+import { useSearch, useSearchStore } from "./search-store";
 
 export interface Status {
   chatEnabled: boolean;
@@ -35,10 +44,42 @@ const EXAMPLES = [
   "Dostoevsky", // typo-tolerant too: try "Dostoyevski"
 ];
 
+/** The value once it has stopped changing for `ms`: one search per pause in typing, not one per keystroke. */
+function useDebounced<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(timer);
+  }, [value, ms]);
+  return settled;
+}
+
+/** Mirrors the search in the URL: typing replaces the history entry, every other change adds one for Back. */
+function useUrlSync() {
+  const store = useSearchStore();
+  useEffect(() => {
+    const unsubscribe = store.subscribe((next, prev) => {
+      const qs = searchToQueryString(next);
+      if (qs === window.location.search) return;
+      const typing = next.q !== prev.q && prev.q !== "";
+      window.history[typing ? "replaceState" : "pushState"](null, "", qs || window.location.pathname);
+    });
+    const onPopState = () => store.setState(searchFromQueryString(window.location.search));
+    window.addEventListener("popstate", onPopState);
+    return () => {
+      unsubscribe();
+      window.removeEventListener("popstate", onPopState);
+    };
+  }, [store]);
+}
+
 export function SearchPage() {
   const state = useSearch();
+  useUrlSync();
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const q = useDebounced(state.q, 250);
   const request = useDeferredValue({
-    q: state.q,
+    q,
     page: state.page,
     sort: state.sort,
     speaker: state.speaker,
@@ -54,7 +95,7 @@ export function SearchPage() {
   });
   const { data, isFetching, isError, error } = useQuery({
     queryKey: ["search", request],
-    queryFn: async (): Promise<SearchResponse & { semantic: boolean }> => {
+    queryFn: async (): Promise<SearchResponse> => {
       const res = await fetch("/api/search", { method: "POST", body: JSON.stringify(request) });
       if (res.status === 503) throw new Error("loading");
       if (!res.ok) throw new Error("Search failed");
@@ -67,10 +108,20 @@ export function SearchPage() {
   });
 
   // Semantic search ranks every chunk, so the total count isn't meaningful: cap paging instead.
-  const semantic = !!data?.semantic;
+  const semantic = data?.semanticRatio !== undefined;
+  // Every hit came from the embeddings, for keywords that no passage contains together (a typo, gibberish, an idea).
+  // Questions are meant to be answered by meaning, so they don't get the warning.
+  const onlyByMeaning =
+    semantic && !isQuestion(request.q) && !!data?.hits.length && data.semanticHitCount === data.hits.length;
+  const mode = isExactPhrase(state.q)
+    ? { label: "Exact phrase", detail: "keywords only" }
+    : isQuestion(state.q)
+      ? { label: "Hybrid search", detail: "a question: meaning leads", ratio: QUESTION_SEMANTIC_RATIO }
+      : { label: "Hybrid search", detail: "keywords + meaning", ratio: SEMANTIC_RATIO };
   const grouped = request.distinct;
   const focused = data?.hits[0] && state.episodeId ? data.hits[0] : undefined;
   const totalPages = data ? (semantic ? Math.min(data.totalPages, 10) : data.totalPages) : 0;
+  const activeFilters = (state.speaker !== "all" ? 1 : 0) + state.guests.length;
 
   return (
     <main className="mx-auto w-full max-w-7xl flex-1 px-4 pb-24">
@@ -106,9 +157,11 @@ export function SearchPage() {
               </span>
             ) : (
               <span className="text-sm">
-                <span className="font-medium">Hybrid search</span>
-                <span className="ml-1 text-muted-foreground">keywords + meaning</span>
-                <span className="ml-1.5 font-mono text-xs text-muted-foreground">semanticRatio={SEMANTIC_RATIO}</span>
+                <span className="font-medium">{mode.label}</span>
+                <span className="ml-1 text-muted-foreground">{mode.detail}</span>
+                {mode.ratio !== undefined && (
+                  <span className="ml-1.5 font-mono text-xs text-muted-foreground">semanticRatio={mode.ratio}</span>
+                )}
               </span>
             )}
           </div>
@@ -130,7 +183,18 @@ export function SearchPage() {
       </section>
 
       <div className="grid gap-8 lg:grid-cols-[250px_1fr]">
-        <FiltersPanel data={data} />
+        <div className="hidden lg:block">
+          <FiltersPanel data={data} />
+        </div>
+        {/* On a phone the filters would push the results two screens down: they open in a sheet instead. */}
+        <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
+          <SheetContent side="bottom" className="max-h-[85dvh] overflow-y-auto rounded-t-2xl p-4 pb-8">
+            <SheetHeader className="p-0">
+              <SheetTitle>Filters</SheetTitle>
+            </SheetHeader>
+            <FiltersPanel data={data} />
+          </SheetContent>
+        </Sheet>
 
         <section className="min-w-0 space-y-4">
           {data && data.episodes.length > 0 && (
@@ -139,7 +203,7 @@ export function SearchPage() {
               {data.episodes.map((e) => (
                 <button
                   key={e.id}
-                  onClick={() => state.toggleGuest(e.guest)}
+                  onClick={() => state.setEpisode(e.id)}
                   className="flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs hover:bg-muted/70"
                 >
                   <Mic className="size-3" />
@@ -154,7 +218,9 @@ export function SearchPage() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-muted-foreground">
               {data ? (
-                semantic ? (
+                onlyByMeaning ? (
+                  <>None of these passages contain all your words: they are the closest by meaning</>
+                ) : semantic ? (
                   <>
                     {grouped ? "Best moment of each episode" : "Best matches"}, ranked by meaning + keywords
                     {!!data.semanticHitCount && (
@@ -170,14 +236,24 @@ export function SearchPage() {
                 ) : (
                   <>
                     <span className="font-medium text-foreground">{data.totalHits.toLocaleString()}</span>{" "}
-                    {grouped ? "episodes" : state.q ? "moments" : "passages"}
+                    {(grouped ? "episode" : request.q ? "moment" : "passage") + (data.totalHits === 1 ? "" : "s")}
                   </>
                 )
               ) : (
                 "Searching…"
               )}
             </p>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setFiltersOpen(true)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground lg:hidden",
+                activeFilters > 0 && "border-[var(--brand)] bg-[var(--brand)]/10 text-foreground",
+              )}
+            >
+              <SlidersHorizontal className="size-3.5" />
+              Filters{activeFilters > 0 && ` · ${activeFilters}`}
+            </button>
             <button
               onClick={() => state.setDistinct(!state.distinct)}
               aria-pressed={state.distinct}
@@ -228,7 +304,8 @@ export function SearchPage() {
               <p className="text-sm text-destructive">Search failed. Is Meilisearch running?</p>
             ))}
 
-          <div className={cn("grid gap-3 transition-opacity", isFetching && "opacity-60")}>
+          {/* minmax(0, 1fr): an auto column grows to the card's widest unwrapped line and overflows a phone screen. */}
+          <div className={cn("grid grid-cols-[minmax(0,1fr)] gap-3 transition-opacity", isFetching && "opacity-60")}>
             {!data
               ? Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-36 rounded-xl" />)
               : data.hits.map((hit) => <QuoteCard

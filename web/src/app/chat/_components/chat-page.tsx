@@ -218,7 +218,7 @@ export function ChatPage({ episodeId }: { episodeId?: string }) {
   };
 
   return (
-    <main className="mx-auto grid w-full max-w-7xl flex-1 gap-8 px-4 py-8 lg:grid-cols-[280px_1fr]">
+    <main className="mx-auto grid w-full max-w-7xl flex-1 gap-4 px-4 py-6 lg:grid-cols-[280px_1fr] lg:gap-8 lg:py-8">
       <aside className="space-y-6">
         <div className="space-y-2">
           <h4 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Chat with</h4>
@@ -252,13 +252,14 @@ export function ChatPage({ episodeId }: { episodeId?: string }) {
             )}
           </div>
           {!episodeId && (
-            <p className="text-xs text-muted-foreground">
+            <p className="hidden text-xs text-muted-foreground lg:block">
               To chat with a single episode, open a search result and pick “Chat with this episode”.
             </p>
           )}
         </div>
 
-        <div className="rounded-lg bg-muted/50 p-3 text-xs leading-relaxed text-muted-foreground">
+        {/* How it works: desktop only, on a phone it pushes the conversation off the first screen. */}
+        <div className="hidden rounded-lg bg-muted/50 p-3 text-xs leading-relaxed text-muted-foreground lg:block">
           Answers come from Meilisearch&apos;s <code className="font-mono">/chats</code> API: the LLM calls a hybrid
           search tool on the <code className="font-mono">chunks</code> index and cites the passages it read. Scoping to
           one episode uses a <strong>tenant token</strong> whose search rule filters{" "}
